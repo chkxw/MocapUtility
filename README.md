@@ -200,6 +200,68 @@ class Quaternion:
 - Devices
 - Assets (NatNet 4.1+)
 
+## NatNet Protocol Version Differences
+
+This library supports NatNet versions 3.0, 4.0, and 4.1. The client automatically detects the server's protocol version and selects the appropriate unpacker. However, understanding the differences is important for troubleshooting.
+
+### Version Detection
+
+The protocol version is determined from the server's response during connection:
+- The client sends a `CONNECT` request with version `[4, 1, 0, 0]`
+- The server responds with its `nat_net_major` and `nat_net_minor` version
+- The appropriate unpacker is selected based on these values
+
+### Key Differences Between Versions
+
+| Feature | NatNet 3.0 | NatNet 4.0 | NatNet 4.1 |
+|---------|------------|------------|------------|
+| Data size fields in frames | No | No | Yes |
+| Asset data support | No | No | Yes |
+| Precision timestamps | No | No | Yes |
+| Marker names in rigid body descriptors | No | Yes | Yes |
+| Size field after descriptor tag | No | No | Yes |
+| Frame suffix size | 42 bytes | 42 bytes | 50 bytes |
+
+### Detailed Version Behavior
+
+#### NatNet 3.0 (`DataUnpackerV3_0`)
+- **Frame Data**: No size fields preceding data sections; parser relies on count fields
+- **Descriptors**: No marker names in rigid body descriptions; no size field after descriptor type tag
+- **Frame Suffix**: 42 bytes (no precision timestamp fields)
+- **Assets**: Not supported; `asset_data` will be `None` in MoCap frames
+
+#### NatNet 4.0 (`DataUnpackerV4_0`)
+- **Frame Data**: Same as 3.0 (no size fields, no asset data)
+- **Descriptors**: Includes marker names in rigid body descriptions (like 4.1), but no size field after descriptor type tag (like 3.0)
+- **Frame Suffix**: 42 bytes (same as 3.0)
+- **Assets**: Not supported in frame data
+- **Note**: This is a transitional version - a hybrid between 3.0 frame format and 4.1 descriptor format
+
+#### NatNet 4.1 (`DataUnpackerV4_1`)
+- **Frame Data**: Size fields precede each data section for validation/skipping
+- **Descriptors**: Full marker names; size field after each descriptor type tag
+- **Frame Suffix**: 50 bytes (includes `precision_timestamp_sec` and `precision_timestamp_frac_sec`)
+- **Assets**: Fully supported; `asset_data` contains asset rigid bodies and markers
+
+### Motive Version Compatibility
+
+| Motive Version | NatNet Version | Notes |
+|----------------|----------------|-------|
+| Motive 2.x | NatNet 3.0 | Legacy format |
+| Motive 3.0 | NatNet 4.0 | Transitional format |
+| Motive 3.1+ | NatNet 4.1 | Current format with full features |
+
+### Checking Protocol Version
+
+You can check which protocol version is being used after connection:
+
+```python
+with NatNetClient(params) as client:
+    if client is not None:
+        print(f"Server: {client.server_info.application_name}")
+        print(f"NatNet Version: {client.server_info.nat_net_major}.{client.server_info.nat_net_minor}")
+```
+
 ## Command Line Arguments
 
 The `NatNetParams` class provides argparse integration:
@@ -217,10 +279,48 @@ params = NatNetParams.from_parser(args)
 
 ## Troubleshooting
 
+### Connection Issues
+
 - **No data received**: Ensure Motive is streaming and firewall allows UDP traffic on ports 1510/1511
 - **Connection timeout**: Verify server IP address and that both computers are on the same network
 - **No rigid bodies found**: Make sure rigid bodies are created and enabled in Motive
 - **Multiple interfaces error**: Specify `local_ip_address` explicitly if auto-detection finds multiple valid interfaces
+
+### NatNet Version Issues
+
+- **Garbled or missing data**: Protocol version mismatch. Check `client.server_info.nat_net_major` and `nat_net_minor` after connection. If the version is unexpected, ensure Motive is updated or check if the unpacker supports your version.
+
+- **`asset_data` is None**: Assets are only supported in NatNet 4.1+. If using Motive 3.0 or earlier, asset data will not be available.
+
+- **Marker names missing in rigid body descriptions**: Marker names in descriptors require NatNet 4.0+. With NatNet 3.0, marker names will be empty strings.
+
+- **Precision timestamps are None**: Precision timestamps (`precision_timestamp_sec`, `precision_timestamp_frac_sec`) are only available in NatNet 4.1+. Earlier versions will have these fields as `None`.
+
+- **Frame parsing errors or struct unpack failures**: This typically indicates a version mismatch where the unpacker expects a different frame format than what the server sends. Common causes:
+  - Server reports incorrect version
+  - Custom or modified NatNet implementation
+  - Network packet corruption
+
+  **Workaround**: You can manually inspect the raw server info to debug:
+  ```python
+  with NatNetClient(params) as client:
+      if client:
+          info = client.server_info
+          print(f"App: {info.application_name}")
+          print(f"App Version: {info.version}")
+          print(f"NatNet: {info.nat_net_major}.{info.nat_net_minor}")
+  ```
+
+- **Data appears correct but asset/skeleton counts are wrong**: NatNet 4.1 changed the frame data order - assets come before labeled markers. If you're seeing incorrect counts, verify the NatNet version matches expectations.
+
+### Version-Specific Workarounds
+
+If you encounter persistent version issues:
+
+1. **Verify Motive version**: Check Help > About in Motive to confirm the expected NatNet version
+2. **Check streaming settings**: In Motive's Data Streaming pane, some versions allow selecting the NatNet version
+3. **Update Motive**: Newer versions of Motive generally have better NatNet compatibility
+4. **Test with OptiTrack samples**: Use OptiTrack's official NatNet SDK samples to verify your setup works before debugging this library
 
 ## License
 

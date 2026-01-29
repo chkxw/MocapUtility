@@ -730,7 +730,7 @@ class NatNetClient(NatNetClientI):
         self.logger.info("Shuting down client")
         self._ready.clear()
         self._loop.call_soon_threadsafe(self._stop.set)
-        self._bg_thread.join()
+        self._bg_thread.join(timeout=3.0)
         self._command_socket.close()
         self._data_socket.close()
         self._server_ready.clear()

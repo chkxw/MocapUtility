@@ -187,6 +187,42 @@ class MoCapUtility:
         except Exception:
             return False
     
+    def _request_model_definitions(self, max_attempts: int = 3, poll_interval: float = 0.2, timeout_per_attempt: float = 1.0) -> bool:
+        """
+        Request model definitions (rigid body descriptors) from the OptiTrack server.
+        Retries up to max_attempts times, polling for a response within each attempt.
+
+        Returns:
+            True if descriptors were received and rigid bodies found, False otherwise.
+        """
+        for attempt in range(1, max_attempts + 1):
+            print(f"Requesting model definitions (attempt {attempt}/{max_attempts})...")
+            self.client.send_request(NAT_Messages.REQUEST_MODEL_DEF, "")
+
+            # Poll for descriptors within the timeout
+            elapsed = 0.0
+            while elapsed < timeout_per_attempt:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                if hasattr(self.client, "descriptors") and self.client.descriptors:
+                    descs = self.client.descriptors
+                    if hasattr(descs, "rigid_body_description") and descs.rigid_body_description:
+                        for rb_id, rb_desc in descs.rigid_body_description.items():
+                            self.robot_id_to_name[rb_id] = rb_desc.name
+                            print(f"Found rigid body: ID={rb_id}, Name='{rb_desc.name}'")
+                            self.robot_states[rb_desc.name] = deque(
+                                maxlen=self.velocity_window_size
+                            )
+                            self.robot_states[str(rb_id)] = self.robot_states[rb_desc.name]
+                        return True
+
+        print(
+            "Warning: No descriptors received from server after "
+            f"{max_attempts} attempts. Will use numeric IDs only."
+        )
+        print("Make sure rigid bodies are enabled/active in Motive.")
+        return False
+
     def connect(self) -> bool:
         """
         Connect to the OptiTrack server.
@@ -201,37 +237,7 @@ class MoCapUtility:
             if self.client is None:
                 return False
 
-            # Request model definitions (descriptors) from the server
-            # This is necessary to get rigid body names
-            print("Requesting model definitions from OptiTrack server...")
-
-            self.client.send_request(NAT_Messages.REQUEST_MODEL_DEF, "")
-
-            # Wait a bit for descriptors to be received
-            time.sleep(0.5)
-
-            # Get descriptors to map robot IDs to names
-            if hasattr(self.client, "descriptors") and self.client.descriptors:
-                if hasattr(self.client.descriptors, "rigid_body_description"):
-                    for (
-                        rb_id,
-                        rb_desc,
-                    ) in self.client.descriptors.rigid_body_description.items():
-                        self.robot_id_to_name[rb_id] = rb_desc.name
-                        print(f"Found rigid body: ID={rb_id}, Name='{rb_desc.name}'")
-                        # Initialize state storage for each robot
-                        self.robot_states[rb_desc.name] = deque(
-                            maxlen=self.velocity_window_size
-                        )
-                        # Also store by ID as fallback
-                        self.robot_states[str(rb_id)] = self.robot_states[rb_desc.name]
-                else:
-                    print("No rigid body descriptions found in descriptors")
-            else:
-                print(
-                    "Warning: No descriptors received from server. Will use numeric IDs only."
-                )
-                print("Make sure rigid bodies are enabled/active in Motive.")
+            self._request_model_definitions()
 
             # Start data collection thread
             self.running = True
